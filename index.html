@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galactic Rebellion: WAR-ZONE v15.1</title>
+    <style>
+        :root { 
+            --neon: #0ef; --warn: #f44; --gold: #ffe81f; 
+            --bg: #000; --glass: rgba(0, 5, 10, 0.4);
+            --border: rgba(0, 238, 255, 0.2);
+        }
+
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background: #000; color: var(--neon); 
+            font-family: 'Consolas', monospace; 
+            overflow: hidden; user-select: none;
+        }
+
+        canvas { position: absolute; top: 0; left: 0; display: block; }
+        #render-layer { z-index: 10; }
+        #nebula-layer { z-index: 5; opacity: 0.3; }
+        #fx-layer { z-index: 15; pointer-events: none; mix-blend-mode: screen; }
+
+        /* --- MICRO-TELEMETRY HUD --- */
+        #hud-root { position: absolute; inset: 0; z-index: 100; pointer-events: none; }
+
+        .micro-panel { 
+            position: absolute; background: var(--glass); border: 1px solid var(--border); 
+            backdrop-filter: blur(4px); padding: 8px; font-size: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.8);
+        }
+
+        #nav-panel { top: 5px; left: 5px; width: 240px; border-left: 2px solid var(--warn); }
+        .log-line { color: #f88; margin-bottom: 2px; white-space: nowrap; overflow: hidden; font-size: 8px; }
+        
+        #vitals-panel { bottom: 5px; right: 5px; width: 220px; border-right: 2px solid var(--neon); }
+        .stat-row { display: flex; justify-content: space-between; margin-top: 4px; color: #fff; }
+        .stat-val { color: var(--gold); font-weight: bold; }
+        .bar-wrap { width: 100%; height: 3px; background: #111; margin-top: 2px; }
+        .bar-fill { height: 100%; transition: width 0.2s; }
+
+        #radar-panel { bottom: 5px; left: 5px; width: 130px; height: 130px; border-radius: 50%; border: 1px solid var(--border); }
+
+        #wave-bar-container { position: absolute; top: 0; width: 100%; height: 2px; background: #111; z-index: 2500; }
+        #wave-bar-fill { height: 100%; background: var(--warn); width: 0%; box-shadow: 0 0 5px var(--warn); }
+
+        #alert-hub { 
+            position: absolute; top: 12%; width: 100%; display: flex; 
+            justify-content: center; pointer-events: none; z-index: 1000;
+        }
+        .prox-box { 
+            display: none; background: rgba(255,0,0,0.15); border: 1px solid var(--warn);
+            padding: 5px 20px; font-size: 16px; color: var(--warn); font-weight: bold;
+            letter-spacing: 8px; animation: flash 0.4s infinite; text-transform: uppercase;
+        }
+        @keyframes flash { 50% { opacity: 0.2; } }
+
+        #boot-screen { 
+            position: absolute; inset: 0; background: #000; z-index: 9999; 
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .btn-launch { 
+            background: rgba(255,0,0,0.1); border: 1px solid var(--warn); color: var(--warn); 
+            padding: 15px 40px; margin: 10px; font-size: 14px; cursor: pointer; letter-spacing: 4px;
+            width: 350px; transition: 0.3s;
+        }
+        .btn-launch:hover { background: var(--warn); color: #000; box-shadow: 0 0 30px var(--warn); }
+    </style>
+</head>
+<body>
+
+<div id="boot-screen">
+    <h1 style="letter-spacing: 15px; font-weight: 100; color: var(--warn);">WAR_ZONE</h1>
+    <p style="color: #444; margin-bottom: 30px; font-size: 10px;">TACTICAL_JUMP_ENABLED_v15.1</p>
+    <button class="btn-launch" onclick="launch('NORMAL')">ENGAGE: STANDARD FLEET</button>
+    <button class="btn-launch" onclick="launch('HARD')">ENGAGE: NIGHTMARE SWARM</button>
+    <p style="color: #555; margin-top: 20px; font-size: 10px;">[WASD] THRUST | [MOUSE] FIRE | [J] HYPER-DASH</p>
+</div>
+
+<div id="wave-bar-container"><div id="wave-bar-fill"></div></div>
+<div id="alert-hub"><div id="prox-box" class="prox-box">MISSILE LOCK DETECTED</div></div>
+
+<div id="hud-root">
+    <div id="nav-panel" class="micro-panel">
+        <div style="opacity:0.5; margin-bottom:4px; color: var(--warn);">TACTICAL_FEED</div>
+        <div id="log-feed" style="height: 70px; overflow: hidden;"></div>
+        <div id="coord-read" style="margin-top:4px; border-top:1px solid #222; padding-top:4px; color:var(--gold);">SEC: UNKNOWN | TGT: 0</div>
+    </div>
+
+    <div id="radar-panel" class="micro-panel">
+        <canvas id="radar-cvs" width="130" height="130"></canvas>
+    </div>
+
+    <div id="vitals-panel" class="micro-panel">
+        <div class="stat-row"><span>SCORE</span><span id="score-txt" class="stat-val">0</span></div>
+        <div class="stat-row"><span>KILLS</span><span id="kill-txt" class="stat-val" style="color:var(--warn);">0</span></div>
+        <div class="stat-row"><span>WAVE</span><span id="wave-txt" class="stat-val" style="color:#0ef;">1</span></div>
+        
+        <div class="stat-row" style="margin-top:8px;"><span>HULL</span><span id="hp-txt" class="stat-val">100</span></div>
+        <div class="bar-wrap"><div id="hp-bar" class="bar-fill" style="width:100%; background:var(--warn);"></div></div>
+        
+        <div class="stat-row"><span>THRUST</span><span id="thr-txt" class="stat-val">0</span></div>
+        <div class="bar-wrap"><div id="thr-bar" class="bar-fill" style="width:0%; background:var(--neon);"></div></div>
+
+        <div class="stat-row" style="margin-top:8px;"><span>JUMP</span><span id="warp-lbl">WAIT</span></div>
+        <div class="bar-wrap" style="height:1px;"><div id="warp-bar" class="bar-fill" style="width:0%; background:var(--gold);"></div></div>
+    </div>
+</div>
+
+<canvas id="nebula-layer"></canvas>
+<canvas id="render-layer"></canvas>
+<canvas id="fx-layer"></canvas>
+
+<script>
+/**
+ * WAR-ZONE ENGINE v15.1
+ * STATIC STARFIELD & TACTICAL HYPER-DASH
+ */
+
+const ctxs = {
+    game: document.getElementById('render-layer').getContext('2d'),
+    neb: document.getElementById('nebula-layer').getContext('2d'),
+    rad: document.getElementById('radar-cvs').getContext('2d'),
+    fx: document.getElementById('fx-layer').getContext('2d')
+};
+
+const COMBAT_DATA = {
+    squadrons: ["Blood-Pack", "Void-Runners", "Crimson-Wing", "Iron-Fist", "Shadow-Guard", "Nebula-Phantoms", "Doom-Singers", "Stellar-Hounds"],
+    callsigns: ["Viper", "Ghost", "Reaper", "Wraith", "Demon", "Specter", "Jester", "Ronin", "Savage", "Gargoyle"],
+    bossNames: ["THE LEVIATHAN", "DREADNOUGHT OMEGA", "TITAN-CLASS DESTROYER", "APOLLYON CRUISER"]
+};
+
+const STATE = {
+    mode: 'MENU', frame: 0, keys: {}, difficulty: 1,
+    res: { w: window.innerWidth, h: window.innerHeight },
+    wave: 1, enemiesToSpawn: 0, activeEnemies: 0,
+    score: 0, kills: 0, multiplier: 1,
+    warping: false, warpFrames: 0
+};
+
+const PILOT = {
+    x: 0, y: 0, vx: 0, vy: 0, ang: -Math.PI/2,
+    thr: 0, hp: 100, max: 100, warp: 100,
+    attr: { spd: 3.2, acc: 2.0, turn: 0.08, rate: 120 },
+    last: 0, dead: false, shake: 0,
+    weapon: { dmg: 15, spd: 60, col: '#0ef' }
+};
+
+const WORLD = { stars: [], rocks: [], enemies: [], bullets: [], particles: [] };
+
+function launch(diff) {
+    STATE.difficulty = diff === 'HARD' ? 1.5 : 1.0;
+    document.getElementById('boot-screen').style.display = 'none';
+    resize();
+    initSim();
+    requestAnimationFrame(mainLoop);
+    logMsg(`COMBAT SIMULATION INITIATED. MODIFIER: ${diff}`);
+}
+
+function resize() {
+    STATE.res.w = window.innerWidth; STATE.res.h = window.innerHeight;
+    ctxs.game.canvas.width = ctxs.neb.canvas.width = ctxs.fx.canvas.width = STATE.res.w;
+    ctxs.game.canvas.height = ctxs.neb.canvas.height = ctxs.fx.canvas.height = STATE.res.h;
+    genNebula();
+}
+
+window.onresize = resize;
+window.onkeydown = e => STATE.keys[e.code] = true;
+window.onkeyup = e => STATE.keys[e.code] = false;
+window.onmousedown = () => fire();
+
+function initSim() {
+    // Generate Fixed Screen Coordinates for Stars
+    for(let i=0; i<1500; i++) WORLD.stars.push({
+        x: Math.random()*STATE.res.w, y: Math.random()*STATE.res.h, o: Math.random()
+    });
+
+    for(let i=0; i<150; i++) WORLD.rocks.push({
+        x: (Math.random()-0.5)*30000, y: (Math.random()-0.5)*30000,
+        r: 40+Math.random()*150, rot: Math.random()*10, vr: (Math.random()-0.5)*0.05, hp: 15
+    });
+    startWave();
+}
+
+function genNebula() {
+    const x = ctxs.neb;
+    x.clearRect(0,0,STATE.res.w, STATE.res.h);
+    const colors = ['#220000', '#110000', '#330011']; 
+    for(let i=0; i<25; i++) {
+        let r = 500 + Math.random()*1000;
+        let g = x.createRadialGradient(Math.random()*STATE.res.w, Math.random()*STATE.res.h, 0, Math.random()*STATE.res.w, Math.random()*STATE.res.h, r);
+        g.addColorStop(0, colors[Math.floor(Math.random()*colors.length)] + '55');
+        g.addColorStop(1, 'transparent');
+        x.fillStyle = g; x.fillRect(0,0,STATE.res.w, STATE.res.h);
+    }
+}
+
+function startWave() {
+    let squad = COMBAT_DATA.squadrons[Math.floor(Math.random()*COMBAT_DATA.squadrons.length)];
+    STATE.enemiesToSpawn = Math.floor((4 + (STATE.wave * 2)) * STATE.difficulty);
+    STATE.activeEnemies = STATE.enemiesToSpawn;
+    
+    logMsg(`WAVE ${STATE.wave} APPROACHING. SQUADRON: ${squad}`);
+
+    if(STATE.wave % 5 === 0) {
+        let boss = COMBAT_DATA.bossNames[Math.floor(Math.random()*COMBAT_DATA.bossNames.length)];
+        logMsg(`WARNING: ${boss} DETECTED.`);
+        spawnEnemy('BOSS'); STATE.enemiesToSpawn--;
+    }
+
+    for(let i=0; i<STATE.enemiesToSpawn; i++) spawnEnemy(Math.random() > 0.8 ? 'BOMBER' : 'FIGHTER');
+    PILOT.hp = Math.min(PILOT.max, PILOT.hp + 20);
+}
+
+function spawnEnemy(t) {
+    let a = Math.random()*Math.PI*2; let d = 2000 + Math.random()*2000;
+    let stats = { hp: 20, spd: 1.8, fireRate: 90, type: t };
+    if(t === 'BOMBER') stats = { hp: 50, spd: 1.0, fireRate: 150, type: t };
+    if(t === 'BOSS') stats = { hp: 500, spd: 0.8, fireRate: 40, type: t };
+
+    WORLD.enemies.push({
+        x: PILOT.x + Math.cos(a)*d, y: PILOT.y + Math.sin(a)*d,
+        vx: 0, vy: 0, ang: 0, hp: stats.hp * STATE.difficulty, 
+        maxHp: stats.hp * STATE.difficulty, spd: stats.spd, fireRate: stats.fireRate, type: t, id: Math.random()
+    });
+}
+
+function explode(x, y, color, count) {
+    for(let i=0; i<count; i++) {
+        let a = Math.random() * Math.PI * 2; let v = 2 + Math.random() * 8;
+        WORLD.particles.push({
+            x: x, y: y, vx: Math.cos(a)*v, vy: Math.sin(a)*v,
+            life: 1.0, decay: 0.02 + Math.random()*0.03, color: color, size: 2 + Math.random()*4
+        });
+    }
+}
+
+function logMsg(m) {
+    const f = document.getElementById('log-feed');
+    const d = document.createElement('div');
+    d.className = 'log-line'; d.innerHTML = `> ${m}`;
+    f.prepend(d);
+}
+
+function fire() {
+    if(PILOT.dead || Date.now() - PILOT.last < PILOT.attr.rate) return;
+    WORLD.bullets.push({
+        x: PILOT.x + Math.cos(PILOT.ang)*30, y: PILOT.y + Math.sin(PILOT.ang)*30,
+        vx: Math.cos(PILOT.ang)*PILOT.weapon.spd + PILOT.vx, vy: Math.sin(PILOT.ang)*PILOT.weapon.spd + PILOT.vy,
+        t: 100, p: true, dmg: PILOT.weapon.dmg, col: PILOT.weapon.col
+    });
+    PILOT.last = Date.now(); PILOT.shake = 5;
+}
+
+function handleKills(e) {
+    explode(e.x, e.y, '#f44', e.type === 'BOSS' ? 200 : 40);
+    STATE.kills++;
+    let pts = e.type === 'BOSS' ? 5000 : (e.type === 'BOMBER' ? 500 : 100);
+    STATE.score += Math.floor(pts * STATE.difficulty * STATE.multiplier);
+    STATE.multiplier += 0.1; STATE.activeEnemies--;
+    logMsg(`TARGET DESTROYED. (CS: ${COMBAT_DATA.callsigns[Math.floor(Math.random()*COMBAT_DATA.callsigns.length)]})`);
+
+    if(STATE.activeEnemies <= 0) { STATE.wave++; setTimeout(startWave, 3000); }
+}
+
+function mainLoop() {
+    STATE.frame++;
+    const x = ctxs.game; const fx = ctxs.fx;
+    
+    // Core Flight Mechanics
+    if(!PILOT.dead) {
+        if(STATE.keys['KeyW']) PILOT.thr = Math.min(100, PILOT.thr + PILOT.attr.acc);
+        else PILOT.thr = Math.max(0, PILOT.thr - 0.5);
+        if(STATE.keys['KeyS']) PILOT.thr = Math.max(-30, PILOT.thr - 1.0);
+        if(STATE.keys['KeyA']) PILOT.ang -= PILOT.attr.turn;
+        if(STATE.keys['KeyD']) PILOT.ang += PILOT.attr.turn;
+
+        // Tactical Hyper-Dash Logic
+        if(STATE.keys['KeyJ'] && PILOT.warp >= 100 && !STATE.warping) {
+            STATE.warping = true; STATE.warpFrames = 20; PILOT.warp = 0;
+            logMsg("TACTICAL HYPER-DASH ENGAGED");
+            PILOT.shake = 15;
+        }
+    }
+
+    if(PILOT.warp < 100 && !STATE.warping) PILOT.warp += 0.15;
+
+    if(STATE.warping) {
+        STATE.warpFrames--;
+        PILOT.vx = Math.cos(PILOT.ang) * 50; // Massive forward speed
+        PILOT.vy = Math.sin(PILOT.ang) * 50;
+        if(STATE.warpFrames <= 0) STATE.warping = false;
+    } else {
+        PILOT.vx += Math.cos(PILOT.ang)*(PILOT.thr/100)*PILOT.attr.spd;
+        PILOT.vy += Math.sin(PILOT.ang)*(PILOT.thr/100)*PILOT.attr.spd;
+    }
+
+    PILOT.x += PILOT.vx; PILOT.y += PILOT.vy;
+    PILOT.vx *= 0.94; PILOT.vy *= 0.94;
+    if(PILOT.shake > 0) PILOT.shake *= 0.88;
+
+    x.clearRect(0,0,STATE.res.w, STATE.res.h);
+    fx.clearRect(0,0,STATE.res.w, STATE.res.h);
+    const cx = PILOT.x - STATE.res.w/2 + (Math.random()-0.5)*PILOT.shake;
+    const cy = PILOT.y - STATE.res.h/2 + (Math.random()-0.5)*PILOT.shake;
+
+    // STATIC STARS / HYPERSPACE STREAKS
+    WORLD.stars.forEach(s => {
+        if(STATE.warping) {
+            // Stars streak backwards based on ship angle during jump
+            s.x -= Math.cos(PILOT.ang) * 60;
+            s.y -= Math.sin(PILOT.ang) * 60;
+        }
+
+        // Screen wrap
+        if(s.x < 0) s.x += STATE.res.w; else if(s.x > STATE.res.w) s.x -= STATE.res.w;
+        if(s.y < 0) s.y += STATE.res.h; else if(s.y > STATE.res.h) s.y -= STATE.res.h;
+
+        x.strokeStyle = `rgba(255,255,255,${s.o})`;
+        x.lineWidth = STATE.warping ? 2 : 1;
+        let streak = STATE.warping ? 100 : 1;
+        
+        x.beginPath(); 
+        x.moveTo(s.x, s.y); 
+        x.lineTo(s.x - Math.cos(PILOT.ang)*streak, s.y - Math.sin(PILOT.ang)*streak); 
+        x.stroke();
+    });
+
+    // Asteroids
+    WORLD.rocks.forEach((r, i) => {
+        r.rot += r.vr;
+        x.save(); x.translate(r.x-cx, r.y-cy); x.rotate(r.rot);
+        x.strokeStyle = '#444'; x.lineWidth = 2; x.beginPath();
+        for(let j=0; j<8; j++) { let d = r.r + Math.sin(j*2)*10; x.lineTo(Math.cos(j*Math.PI/4)*d, Math.sin(j*Math.PI/4)*d); }
+        x.closePath(); x.stroke(); x.restore();
+
+        WORLD.bullets.forEach(b => {
+            if(Math.hypot(b.x-r.x, b.y-r.y) < r.r) {
+                b.t = 0; r.hp -= (b.dmg || 10);
+                explode(b.x, b.y, '#aaa', 5);
+                if(r.hp<=0) { WORLD.rocks.splice(i,1); explode(r.x, r.y, '#555', 30); }
+            }
+        });
+    });
+
+    // Enemy AI
+    let alarm = false;
+    WORLD.enemies.forEach((e, i) => {
+        let dist = Math.hypot(PILOT.x-e.x, PILOT.y-e.y);
+        if(dist < 6000) {
+            let targetAng = Math.atan2(PILOT.y-e.y, PILOT.x-e.x);
+            let diffAng = targetAng - e.ang;
+            while(diffAng <= -Math.PI) diffAng += Math.PI*2;
+            while(diffAng > Math.PI) diffAng -= Math.PI*2;
+            e.ang += diffAng * 0.05;
+
+            if(dist > 300) { e.vx += Math.cos(e.ang)*e.spd; e.vy += Math.sin(e.ang)*e.spd; }
+            else if (dist < 150) { e.vx -= Math.cos(e.ang)*e.spd; e.vy -= Math.sin(e.ang)*e.spd; } 
+
+            if(dist < 2500) {
+                alarm = true;
+                if(STATE.frame % e.fireRate === 0) {
+                    if(e.type === 'BOSS') {
+                        for(let s=-1; s<=1; s++) WORLD.bullets.push({x:e.x, y:e.y, vx:Math.cos(e.ang+s*0.2)*30, vy:Math.sin(e.ang+s*0.2)*30, t:150, p:false});
+                    } else WORLD.bullets.push({x:e.x, y:e.y, vx:Math.cos(e.ang)*40, vy:Math.sin(e.ang)*40, t:100, p:false});
+                }
+            }
+        }
+        e.x += e.vx; e.y += e.vy; e.vx *= 0.95; e.vy *= 0.95;
+        drawVessel(e.x-cx, e.y-cy, e.ang, '#f44', e.type === 'BOSS' ? 100 : (e.type === 'BOMBER' ? 60 : 40));
+    });
+
+    document.getElementById('prox-box').style.display = alarm ? 'block' : 'none';
+
+    // Bullets
+    WORLD.bullets.forEach((b, i) => {
+        b.x += b.vx; b.y += b.vy; b.t--;
+        x.strokeStyle = b.col || (b.p ? '#0ef' : '#f44'); x.lineWidth = b.p ? 4 : 6;
+        x.beginPath(); x.moveTo(b.x-cx, b.y-cy); x.lineTo(b.x-cx-b.vx*0.2, b.y-cy-b.vy*0.2); x.stroke();
+        
+        // Invulnerable while jumping!
+        if(!b.p && Math.hypot(b.x-PILOT.x, b.y-PILOT.y) < 30 && !PILOT.dead && !STATE.warping) {
+            PILOT.hp -= 15; b.t = 0; PILOT.shake = 25; STATE.multiplier = 1; 
+            explode(PILOT.x, PILOT.y, '#f44', 10);
+            if(PILOT.hp <= 0) { 
+                PILOT.dead = true; explode(PILOT.x, PILOT.y, '#0ef', 200);
+                logMsg("CRITICAL HULL FAILURE."); setTimeout(()=>location.reload(), 4000); 
+            }
+        }
+        if(b.p) {
+            WORLD.enemies.forEach((e, ei) => {
+                let hitbox = e.type === 'BOSS' ? 80 : 40;
+                if(Math.hypot(b.x-e.x, b.y-e.y) < hitbox) { 
+                    e.hp -= b.dmg; b.t = 0; explode(b.x, b.y, '#ffa', 5);
+                    if(e.hp <= 0) { WORLD.enemies.splice(ei,1); handleKills(e); } 
+                }
+            });
+        }
+        if(b.t <= 0) WORLD.bullets.splice(i,1);
+    });
+
+    // FX Engine
+    WORLD.particles.forEach((p, i) => {
+        p.x += p.vx; p.y += p.vy; p.life -= p.decay;
+        if(p.life <= 0) { WORLD.particles.splice(i,1); return; }
+        fx.fillStyle = p.color; fx.globalAlpha = p.life;
+        fx.beginPath(); fx.arc(p.x-cx, p.y-cy, p.size*p.life, 0, Math.PI*2); fx.fill();
+        fx.globalAlpha = 1.0;
+    });
+
+    if(!PILOT.dead) {
+        // Draw trailing ghost effect if warping
+        if(STATE.warping) drawVessel(STATE.res.w/2 - Math.cos(PILOT.ang)*30, STATE.res.h/2 - Math.sin(PILOT.ang)*30, PILOT.ang, 'rgba(0, 238, 255, 0.4)', 40, PILOT.thr);
+        drawVessel(STATE.res.w/2, STATE.res.h/2, PILOT.ang, '#fff', 40, PILOT.thr);
+    }
+
+    syncUI();
+    requestAnimationFrame(mainLoop);
+}
+
+function drawVessel(x, y, ang, col, size, thr=0) {
+    const ctx = ctxs.game; let w = size, h = size*0.6;
+    ctx.save(); ctx.translate(x,y); ctx.rotate(ang);
+    ctx.strokeStyle = col; ctx.lineWidth = 2;
+    ctx.strokeRect(-w/2, -h/2, w, h);
+    
+    if(thr > 10) { ctx.fillStyle = '#0ef'; ctx.fillRect(-w/2 - 10, -h/4, 10, h/2); }
+    ctx.beginPath(); ctx.moveTo(0, -h/2); ctx.lineTo(w/2, 0); ctx.lineTo(0, h/2); ctx.stroke();
+    ctx.restore();
+}
+
+function syncUI() {
+    document.getElementById('hp-bar').style.width = (PILOT.hp/PILOT.max)*100 + "%";
+    document.getElementById('hp-txt').innerText = Math.max(0, Math.floor(PILOT.hp));
+    document.getElementById('thr-bar').style.width = Math.abs(PILOT.thr) + "%";
+    document.getElementById('thr-txt').innerText = Math.floor(PILOT.thr);
+    
+    document.getElementById('score-txt').innerText = Math.floor(STATE.score);
+    document.getElementById('kill-txt').innerText = STATE.kills;
+    document.getElementById('wave-txt').innerText = STATE.wave;
+    
+    document.getElementById('warp-bar').style.width = PILOT.warp + "%";
+    document.getElementById('warp-lbl').innerText = PILOT.warp >= 100 ? "READY [J]" : "CHG";
+    document.getElementById('warp-lbl').style.color = PILOT.warp >= 100 ? "var(--gold)" : "#fff";
+
+    let waveProgress = 1 - (STATE.activeEnemies / STATE.enemiesToSpawn);
+    document.getElementById('wave-bar-fill').style.width = (waveProgress * 100) + "%";
+    document.getElementById('coord-read').innerText = `SEC: WZ-${STATE.wave} | TGT: ${STATE.activeEnemies}`;
+
+    const rx = ctxs.rad; rx.clearRect(0,0,130,130);
+    rx.strokeStyle = 'rgba(0,255,255,0.1)'; rx.beginPath(); rx.arc(65,65,63,0,Math.PI*2); rx.stroke();
+    WORLD.enemies.forEach(e => { 
+        rx.fillStyle = e.type === 'BOSS' ? '#f0f' : '#f44'; 
+        let rs = e.type === 'BOSS' ? 5 : 3;
+        rx.fillRect((e.x-PILOT.x)*0.006 + 65, (e.y-PILOT.y)*0.006 + 65, rs, rs); 
+    });
+    rx.fillStyle = '#fff'; rx.fillRect(64,64,2,2);
+}
+</script>
+</body>
+</html>
+
